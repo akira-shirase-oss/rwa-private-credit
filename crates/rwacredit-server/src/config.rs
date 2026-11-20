@@ -439,9 +439,14 @@ impl Config {
             }
             match raw.parse::<IpAddr>() {
                 Ok(ip) => trusted_proxies.push(ip),
-                Err(_) => p.0.push(
-                    "RWACREDIT_TRUSTED_PROXIES must be comma-separated IP addresses".to_owned(),
-                ),
+                Err(_) => {
+                    // The braces keep rustfmt's chosen shape identical for every copied
+                    // NAME length (scripts/test-copy-names.sh); a bare expression arm can
+                    // be re-wrapped into a block for short names, needing this `;`.
+                    p.0.push(
+                        "RWACREDIT_TRUSTED_PROXIES must be comma-separated IP addresses".to_owned(),
+                    );
+                }
             }
         }
         let accounts = Settings {

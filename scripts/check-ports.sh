@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# Port band (deploy/compose.yaml): every port this repository binds on the shared machine
-# stays inside 63200-63299, so a second checkout or another project never collides with it.
-# Scanned: deploy/, the workflows, the shell scripts and the k6 scenarios — a port mapping,
-# a loopback address with a literal port, a *PORT variable's default, or a port= assignment
-# outside the band fails. Rust sources are not scanned: tests bind 127.0.0.1:0 (ephemeral)
-# and name deliberately unreachable ports.
+# Port band: every port this repository binds on a shared machine stays inside its band,
+# so a second checkout or another project never collides with it. The band comes from
+# PORT_BAND (default 63200-63299, this repository's own band; a copy sets its own —
+# docs/COPYING.md). Linux's ephemeral range ends at 60999; pick a band above it.
+# Scanned: deploy/, the workflows, the shell scripts and the k6 scenarios — a port
+# mapping, a loopback address with a literal port, a *PORT variable's default, or a
+# port= assignment outside the band fails. Rust sources are not scanned: tests bind
+# 127.0.0.1:0 (ephemeral) and name deliberately unreachable ports.
 #
-# Usage: scripts/check-ports.sh [file ...]   (default: the scanned set)
+# Usage: PORT_BAND=<low>-<high> scripts/check-ports.sh [file ...]   (default: the scanned set)
 # Passing files is how scripts/check.sh proves the check can fail.
 set -euo pipefail
+case "${1:-}" in -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+case "${1:-}" in -*) echo "check-ports.sh: unknown argument $1 (see --help)" >&2; exit 2 ;; esac
 cd "$(dirname "$0")/.."
 
-case "${1:-}" in
-  -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
-  -*) echo "check-ports.sh: unknown argument $1 (see --help)" >&2; exit 2 ;;
-esac
+band="${PORT_BAND:=63200-63299}"
+[[ "$band" =~ ^[0-9]{2,5}-[0-9]{2,5}$ ]] || { echo "check-ports.sh: PORT_BAND must be <low>-<high>, got '$band'" >&2; exit 2; }
+band_low="${band%%-*}" band_high="${band##*-}"
 
 if (( $# )); then
   files=("$@")
@@ -23,10 +26,10 @@ else
   files=(deploy/* .github/workflows/*.yml scripts/*.sh scripts/drills/*.sh perf/scenarios/*.js)
 fi
 
-in_band() { [ "$1" -ge 63200 ] && [ "$1" -le 63299 ]; }
+in_band() { [ "$1" -ge "$band_low" ] && [ "$1" -le "$band_high" ]; }
 fail=0
 report() {
-  echo "error: $file:$1: port $2 outside the port band 63200-63299: $3" >&2
+  echo "error: $file:$1: port $2 outside the port band $band: $3" >&2
   fail=1
 }
 
@@ -64,4 +67,4 @@ for file in "${files[@]}"; do
 done
 
 if (( fail )); then exit 1; fi
-echo "ports ok: every literal port is inside the band 63200-63299 in ${#files[@]} files"
+echo "ports ok: every literal port is inside the band $band in ${#files[@]} files"

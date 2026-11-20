@@ -26,3 +26,13 @@ Rust backend on Axum, SQLx and tokio (the template's stack); SvelteKit + TypeScr
 (strict) for the web UI once the maintainer chooses this product's design system — no
 `web/` product code before that. Solidity + Foundry only for on-chain code, in
 `contracts/`. Everything else follows `docs/END_GOAL.md`.
+## D-004 — Template pull to c9e944f
+
+The template's changes since `TEMPLATE_ORIGIN` (`7fa7e17`) arrive as one reviewed diff,
+renamed for this copy: the parameterized `scripts/check-ports.sh` (`PORT_BAND`, this
+copy's 63200-63299 set in `scripts/check.sh`), `scripts/check-workflows.sh` (no duplicate
+mapping keys in the workflows), the `tests/attacks` workspace member (the pentest
+regression suite plus the proptest never-panics targets and their seed corpus),
+`scripts/fuzz-smoke.sh` wired into the gate, and the `config.rs` code shape that stays
+fmt- and clippy-clean at any crate-name length. Rationale: the maintainer's security and
+stability rule lands in every product through the template, not as per-repo rewrites.
