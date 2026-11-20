@@ -29,11 +29,16 @@ template, and writes `TEMPLATE_ORIGIN` with the commit it came from:
 Then, by hand:
 
 1. `git init`, push, and turn on the copied CI (`.github/workflows/ci.yml`) and Dependabot.
-2. Pick the product's own ports (the template uses 63250 for the server, 63232 for the
-   development database), the API-token prefix (`tokens::API_TOKEN_PREFIX`, `rc_`), and the
-   `From` address.
-3. Read `docs/OPERATIONS.md` and run every drill once on the product's own stores.
-4. Delete what the product does not use, with what is coupled to it (below). A product
+2. Pick the product's own port band (above Linux's ephemeral range, which ends at 60999)
+   and set it in `scripts/check.sh` (`port_band=`): `scripts/check-ports.sh` then fails
+   any literal port outside it. Pick the product's own ports inside the band (this copy
+   uses 63250 for the server, 63232 for the development database), the API-token
+   prefix (`tokens::API_TOKEN_PREFIX`, `rc_`), and the `From` address.
+3. Any script the product adds under `scripts/` must pass `scripts/test-help.sh`'s idiom:
+   `--help` prints the header comment as its explanation, and an unknown argument exits
+   non-zero saying what was wrong and pointing at `--help`.
+4. Read `docs/OPERATIONS.md` and run every drill once on the product's own stores.
+5. Delete what the product does not use, with what is coupled to it (below). A product
    without accounts deletes `crates/*-accounts`, `migrations/0002_accounts.sql`, the
    kit's rows in the manifest and the kit's routes in `crates/*-server/src/lib.rs`.
 
@@ -53,6 +58,7 @@ Durable Runner.
 | Releases and the rehearsal | `scripts/{deploy,rollback,upgrade-rehearsal}.sh` | the migration and schema steps become the product's own compatibility check (a journal format version, say) |
 | Restore drills | `scripts/drills/` | one per store the product has |
 | CI and evidence kit | `scripts/check-*.sh`, `scripts/install-*.sh`, `.github/` | add the steps to the product's own gate |
+| Attack and fuzz kit | `tests/attacks`, `scripts/fuzz-smoke.sh` | attack the product's real routes as they grow; a fuzz crash is a red-first bug — fix it and keep the shrunk input in `tests/attacks/fuzz/corpus/` |
 
 ## What must stay in step
 

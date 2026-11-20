@@ -4,8 +4,8 @@
 #
 #   scripts/check.sh
 #
-# Toolchain pin, formatting, Clippy with warnings denied, the architecture, pin and results
-# checks (each shown able to fail), the host layer's checks, every test against PostgreSQL
+# Toolchain pin, formatting, Clippy with warnings denied, the architecture, pin, port-band,
+# workflow-YAML and results checks (each shown able to fail), the host layer's checks, every test against PostgreSQL
 # (the local stack starts when RWACREDIT_TEST_DATABASE_URL is unset), the restore drills with
 # their controls and the upgrade rehearsal, then cargo-deny. The limit proofs
 # (scripts/prove-limits.sh) run as their own CI job.
@@ -57,25 +57,41 @@ for unpinned in 'services:\n  db:\n    image: postgres:18\n' 'steps:\n  - uses: 
 done
 rm -f "$sample"
 
-step "ports inside the band 63200-63299, and the check can fail"
-scripts/check-ports.sh
+# The copy's port band: every port it binds stays inside it (docs/COPYING.md). The
+# out-of-band probes reach the sample file through printf %s, so this script itself
+# holds no offending literal for the check to flag.
+port_band="${PORT_BAND:=63200-63299}"
+step "ports inside the band $port_band, and the check can fail"
+PORT_BAND="$port_band" scripts/check-ports.sh
+band_low="${port_band%%-*}" band_high="${port_band##*-}"
 sample="$(mktemp)"
 for bad in '  - "61300:5432"' 'port=8080'; do
   printf '%s\n' "$bad" >"$sample"
-  if scripts/check-ports.sh "$sample" >/dev/null 2>&1; then
+  if PORT_BAND="$port_band" scripts/check-ports.sh "$sample" >/dev/null 2>&1; then
     echo "error: the port check did not catch: $bad" >&2
     rm -f "$sample"
     exit 1
   fi
 done
-for n in 63050 63300; do
+for n in $((band_low - 1)) $((band_high + 1)); do
   printf 'echo http://127.0.0.1:%s/livez\n' "$n" >"$sample"
-  if scripts/check-ports.sh "$sample" >/dev/null 2>&1; then
+  if PORT_BAND="$port_band" scripts/check-ports.sh "$sample" >/dev/null 2>&1; then
     echo "error: the port check did not catch a loopback port $n outside the band" >&2
     rm -f "$sample"
     exit 1
   fi
 done
+rm -f "$sample"
+
+step "workflow files parse with no duplicate keys, and the check can fail"
+scripts/check-workflows.sh
+sample="$(mktemp)"
+printf 'jobs:\n  build:\n    steps: []\n  build:\n    steps: []\n' >"$sample"
+if scripts/check-workflows.sh "$sample" >/dev/null 2>&1; then
+  echo "error: the workflow check passed a duplicate key" >&2
+  rm -f "$sample"
+  exit 1
+fi
 rm -f "$sample"
 
 step "results name no host, and the check can fail"
@@ -108,6 +124,9 @@ if [ -z "${RWACREDIT_TEST_DATABASE_URL:-}" ]; then
 fi
 export RWACREDIT_TEST_DATABASE_URL
 cargo test --workspace --locked
+
+step "fuzz smoke: every parser of outside input (seed corpus + bounded cases)"
+scripts/fuzz-smoke.sh --cases "${PROPTEST_CASES:-512}"
 
 step "drills: PostgreSQL and SQLite restore, their controls, the upgrade rehearsal"
 # A pinned age installed into this copy's target (scripts/install-age.sh target/tools/bin).

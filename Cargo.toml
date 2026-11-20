@@ -2,7 +2,7 @@
 # A product copies this directory once and owns the copy: nothing here is a shared package,
 # and nothing depends on the repository it came from (docs/COPYING.md).
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "tests/attacks"]
 resolver = "3"
 
 [workspace.package]
@@ -16,6 +16,7 @@ publish = false
 rwacredit-http = { path = "crates/rwacredit-http" }
 rwacredit-db = { path = "crates/rwacredit-db" }
 rwacredit-accounts = { path = "crates/rwacredit-accounts" }
+rwacredit-server = { path = "crates/rwacredit-server" }
 
 # External crates: versions live here only. Minimal features; one async runtime (Tokio). One
 # TLS stack, rustls, and only for the database client: Neon requires TLS. The service itself
@@ -31,6 +32,8 @@ http-body-util = "0.1.5"
 hyper = { version = "1.12", default-features = false, features = ["server", "http1"] }
 hyper-util = { version = "0.1.21", default-features = false, features = ["tokio", "server", "service", "http1"] }
 proptest = "1.12.0"
+# The attack suite only: real HTTP requests against a running instance (loopback, no TLS).
+reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.10.9"
