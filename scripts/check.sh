@@ -7,8 +7,9 @@
 # Toolchain pin, formatting, Clippy with warnings denied, the architecture, pin and results
 # checks (each shown able to fail), the host layer's checks, every test against PostgreSQL
 # (the local stack starts when RWACREDIT_TEST_DATABASE_URL is unset), the restore drills with
-# their controls and the upgrade rehearsal, then cargo-deny. The limit proofs
-# (scripts/prove-limits.sh) run as their own CI job.
+# their controls and the upgrade rehearsal, the contracts gate (scripts/check-contracts.sh),
+# then cargo-deny. The limit proofs (scripts/prove-limits.sh) and the guard proofs
+# (scripts/prove-guards.sh) run as their own CI jobs.
 #
 # Needs: the pinned toolchain through rustup, docker (or RWACREDIT_TEST_DATABASE_URL), and
 # cargo-deny (skipped with a note when absent; CI always runs it).
@@ -123,6 +124,14 @@ if command -v age >/dev/null 2>&1; then
   scripts/upgrade-rehearsal.sh --out target/drills/upgrade-rehearsal.json
 else
   echo "note: age is not installed (scripts/install-age.sh target/tools/bin); the drills are skipped locally (CI runs them)"
+fi
+
+step "contracts: forge fmt, build, unit, fuzz and invariant tests (scripts/check-contracts.sh)"
+# A pinned forge installed into this copy's target (scripts/install-foundry.sh target/tools/bin).
+if [ -d target/tools/bin ] && [ -x target/tools/bin/forge ] || command -v forge >/dev/null 2>&1; then
+  scripts/check-contracts.sh
+else
+  echo "note: forge is not installed (scripts/install-foundry.sh target/tools/bin); the contracts gate is skipped locally (CI runs it)"
 fi
 
 step "cargo deny (advisories, licenses, bans, sources)"

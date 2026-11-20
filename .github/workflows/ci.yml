@@ -102,19 +102,30 @@ jobs:
         run: sudo -E env "PATH=$PATH" scripts/test-install.sh
 
   contracts:
-    name: contracts (forge build and test, when src has .sol files)
+    name: contracts (forge fmt, build, unit, fuzz and invariant tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+          submodules: recursive
+      # Foundry v1.10.0, checked against the SHA-256 recorded in the script.
+      - name: Foundry (pinned by version and checksum)
+        run: scripts/install-foundry.sh "$RUNNER_TEMP/bin" && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: The contracts gate
+        run: scripts/check-contracts.sh
+
+  guards:
+    name: every guard's tests fail without the guard (scripts/prove-guards.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: v1.10.0
-      - name: Skip cleanly while there are no contracts
-        run: |
-          if ! find contracts/src -name '*.sol' -print -quit | grep -q .; then
-            echo "no .sol files under contracts/src; nothing to build" && exit 0
-          fi
-          forge build && forge test -vvv
+          persist-credentials: false
+          submodules: recursive
+      - name: Foundry (pinned by version and checksum)
+        run: scripts/install-foundry.sh "$RUNNER_TEMP/bin" && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Prove every guard
+        run: scripts/prove-guards.sh --out "$RUNNER_TEMP/guards.json"

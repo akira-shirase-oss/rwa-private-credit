@@ -1,5 +1,8 @@
 # src/
 
-Contracts land here at their milestone — the registry, compliance gate, token,
-CreditPool and distributor (docs/ROADMAP.md, M1–M3). Until then this directory is
-empty: the contracts CI job skips itself while no `.sol` file exists.
+M1 (docs/ROADMAP.md): `IdentityRegistry` (claims and flags only), `ComplianceModule`
+(the transfer rules), `PoolToken` (ERC-20 with the ERC-7943 interface; every balance
+change passes one compliance hook) and `Council` (the M-of-N, timelocked process behind
+every privileged action). The access-control model is docs/ACCESS_CONTROL.md. Each
+protection carries a `// GUARD(name)` marker proven by scripts/prove-guards.sh. The
+CreditPool and distributor land in M2 and M3.
