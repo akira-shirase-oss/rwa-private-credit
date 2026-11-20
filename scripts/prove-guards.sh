@@ -161,7 +161,8 @@ open(path, "w").write("\n".join(lines))
 PY
 }
 
-(cd "$work" && forge build --offline -q) || { echo "error: the unmutated contracts do not build" >&2; exit 1; }
+# Online once, so a fresh machine fetches the pinned solc; the mutation runs are offline.
+(cd "$work" && forge build -q) || { echo "error: the unmutated contracts do not build" >&2; exit 1; }
 failures=0
 results=()
 for row in "${mutations[@]}"; do
