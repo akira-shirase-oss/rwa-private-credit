@@ -1,0 +1,39 @@
+[package]
+name = "rwacredit-server"
+description = "The service skeleton: configuration, the health contract, wiring, and rwacreditctl."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rwacredit-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "rwacreditctl"
+path = "src/bin/rwacreditctl.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+rwacredit-accounts.workspace = true
+rwacredit-db.workspace = true
+rwacredit-http.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+rwacredit-db = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["process"] }
+tower.workspace = true
+
+[lints]
+workspace = true

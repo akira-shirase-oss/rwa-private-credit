@@ -1,0 +1,8 @@
+[profile.default]
+solc = "0.8.30"
+optimizer = true
+optimizer_runs = 200
+
+[fuzz]
+# The end goal requires at least 10,000 runs per invariant.
+runs = 10000
