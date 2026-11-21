@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 /// The governance process for every privileged action that can move a holder's tokens or
-/// change a rule: an M-of-N council of distinct members (M >= 2) with a delay. A member
+/// change a rule: an M-of-N council of distinct members (2 <= M < N) with a delay. A member
 /// proposes a call with a reason code, other members approve it, and once the threshold
 /// is reached the call is queued; after the delay, and before the grace period ends, a
 /// member executes it exactly once. Any change of membership or threshold invalidates
@@ -219,7 +219,9 @@ contract Council {
     function _setMembers(address[] memory members_, uint256 threshold_) private {
         uint256 count = members_.length;
         if (count == 0 || count > MAX_MEMBERS) revert BadMembers();
-        if (threshold_ < MIN_THRESHOLD || threshold_ > count) revert BadThreshold(threshold_, count); // GUARD(council-min-threshold)
+        if (threshold_ < MIN_THRESHOLD) revert BadThreshold(threshold_, count); // GUARD(council-min-threshold)
+        // M < N: at M == N one member is N - M + 1 vetoes and could keep itself on the council.
+        if (threshold_ >= count) revert BadThreshold(threshold_, count); // GUARD(council-threshold-below-count)
         for (uint256 i = 0; i < _members.length; ++i) {
             isMember[_members[i]] = false;
         }
@@ -227,6 +229,8 @@ contract Council {
         for (uint256 i = 0; i < count; ++i) {
             address m = members_[i];
             if (m == address(0) || isMember[m]) revert BadMembers(); // GUARD(council-unique-members)
+            // The council executing `approve` on itself would count as a member's approval.
+            if (m == address(this)) revert BadMembers(); // GUARD(council-not-own-member)
             isMember[m] = true;
             _members.push(m);
         }

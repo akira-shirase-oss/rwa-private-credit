@@ -14,6 +14,10 @@ contract ComplianceModule is CouncilGoverned {
     uint256 public constant MAX_LOCKUP = 5 * 365 days;
 
     IdentityRegistry public immutable registry;
+    /// The token's decimals; the minimum holding is at least one whole token, 10 ** decimals.
+    uint8 public immutable decimals;
+    uint256 public immutable minHoldingFloor;
+    uint8 public constant MAX_DECIMALS = 18;
 
     mapping(uint16 country => bool) public countryAllowed;
     uint256 public maxHolders;
@@ -25,6 +29,7 @@ contract ComplianceModule is CouncilGoverned {
         uint256 maxHolders;
         uint256 minHolding;
         uint64 lockupEnd;
+        uint8 decimals;
     }
 
     event CountryAllowed(uint16 indexed country, bool allowed);
@@ -36,15 +41,20 @@ contract ComplianceModule is CouncilGoverned {
     error BadMaxHolders(uint256 maxHolders);
     error BadLockupEnd(uint64 lockupEnd);
     error BadMinHolding(uint256 minHolding);
+    error BadDecimals(uint8 decimals);
 
     constructor(address council_, IdentityRegistry registry_, Rules memory rules) CouncilGoverned(council_) {
         if (address(registry_) == address(0)) revert ZeroAddress();
         registry = registry_;
+        if (rules.decimals > MAX_DECIMALS) revert BadDecimals(rules.decimals);
+        decimals = rules.decimals;
+        uint256 floor = 10 ** rules.decimals;
+        minHoldingFloor = floor;
         for (uint256 i = 0; i < rules.allowedCountries.length; ++i) {
             _setCountry(rules.allowedCountries[i], true);
         }
         _setMaxHolders(rules.maxHolders);
-        _setMinHolding(rules.minHolding);
+        _setMinHolding(rules.minHolding, floor);
         _setLockupEnd(rules.lockupEnd);
     }
 
@@ -60,7 +70,7 @@ contract ComplianceModule is CouncilGoverned {
 
     // GUARD(compliance-min-holding-council)
     function setMinHolding(uint256 minHolding_) external onlyCouncil {
-        _setMinHolding(minHolding_);
+        _setMinHolding(minHolding_, minHoldingFloor);
     }
 
     // GUARD(compliance-lockup-council)
@@ -117,10 +127,11 @@ contract ComplianceModule is CouncilGoverned {
         emit MaxHoldersSet(maxHolders_);
     }
 
-    /// Never zero: every holder slot then costs at least the minimum, so empty wallets
-    /// cannot be filled with dust to reach the holder cap.
-    function _setMinHolding(uint256 minHolding_) private {
-        if (minHolding_ == 0) revert BadMinHolding(minHolding_); // GUARD(min-holding-positive)
+    /// At least one whole token. A holder slot is taken only by a balance of at least the
+    /// minimum, so filling F free slots takes at least F x minHolding (>= F whole tokens),
+    /// each part in the wallet of a separately registered investor.
+    function _setMinHolding(uint256 minHolding_, uint256 floor) private {
+        if (minHolding_ < floor) revert BadMinHolding(minHolding_); // GUARD(min-holding-floor)
         minHolding = minHolding_;
         emit MinHoldingSet(minHolding_);
     }

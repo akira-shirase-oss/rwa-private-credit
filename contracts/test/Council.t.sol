@@ -8,6 +8,8 @@ import {Fixture} from "./Fixture.sol";
 /// The documented process: M-of-N distinct approvals, the delay, the grace period, the
 /// exact calldata, once only, and a membership change voids what is pending.
 contract CouncilTest is Fixture {
+    bytes32 internal constant COUNCIL_CODEHASH = 0xca30be8edb5ae4b82eebe2976681f456614eb8bd21544338a27759a4ed2ce6d2;
+
     bytes internal call_;
 
     function setUp() public override {
@@ -220,28 +222,119 @@ contract CouncilTest is Fixture {
     }
 
     function test_the_council_refuses_weak_or_duplicate_membership() public {
-        address[] memory two = new address[](2);
-        (two[0], two[1]) = (m1, m2);
-        vm.expectRevert(abi.encodeWithSelector(Council.BadThreshold.selector, 1, 2));
-        deployer.council(two, 1, 1 days);
-        vm.expectRevert(abi.encodeWithSelector(Council.BadThreshold.selector, 3, 2));
-        deployer.council(two, 3, 1 days);
+        address[] memory three = new address[](3);
+        (three[0], three[1], three[2]) = (m1, m2, m3);
+        vm.expectRevert(abi.encodeWithSelector(Council.BadThreshold.selector, 1, 3));
+        deployer.council(three, 1, 1 days);
+        vm.expectRevert(abi.encodeWithSelector(Council.BadThreshold.selector, 4, 3));
+        deployer.council(three, 4, 1 days);
         vm.expectRevert(abi.encodeWithSelector(Council.BadDelay.selector, 1 days - 1));
-        deployer.council(two, 2, 1 days - 1);
+        deployer.council(three, 2, 1 days - 1);
         vm.expectRevert(abi.encodeWithSelector(Council.BadDelay.selector, 30 days + 1));
-        deployer.council(two, 2, 30 days + 1);
-        two[1] = m1;
+        deployer.council(three, 2, 30 days + 1);
+        three[1] = m1;
         vm.expectRevert(Council.BadMembers.selector);
-        deployer.council(two, 2, 1 days);
-        two[1] = address(0);
+        deployer.council(three, 2, 1 days);
+        three[1] = address(0);
         vm.expectRevert(Council.BadMembers.selector);
-        deployer.council(two, 2, 1 days);
+        deployer.council(three, 2, 1 days);
         address[] memory many = new address[](17);
         for (uint256 i = 0; i < 17; ++i) {
             many[i] = address(uint160(i + 1));
         }
         vm.expectRevert(Council.BadMembers.selector);
         deployer.council(many, 2, 1 days);
+    }
+
+    /// M == N would let one member veto every change to the council (N - M + 1 = 1) and so
+    /// keep itself on it: the threshold is below the member count.
+    function test_the_threshold_is_below_the_member_count() public {
+        address[] memory three = new address[](3);
+        (three[0], three[1], three[2]) = (m1, m2, m3);
+        vm.expectRevert(abi.encodeWithSelector(Council.BadThreshold.selector, 3, 3));
+        deployer.council(three, 3, 1 days);
+        address[] memory two = new address[](2);
+        (two[0], two[1]) = (m1, m2);
+        vm.expectRevert(abi.encodeWithSelector(Council.BadThreshold.selector, 2, 2));
+        deployer.council(two, 2, 1 days);
+        bytes memory change = abi.encodeCall(Council.setMembers, (two, 2));
+        bytes32 id = _queue(address(council), change);
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(abi.encodeWithSelector(Council.BadThreshold.selector, 2, 2));
+        vm.prank(m3);
+        council.execute(id, change);
+        assertEq(council.members().length, 3);
+        assertEq(council.threshold(), 2);
+        assertEq(council.vetoesNeeded(address(council)), 2);
+    }
+
+    /// The council executing `approve` on itself would count as a member's approval.
+    function test_the_council_is_never_its_own_member() public {
+        address[] memory next = new address[](3);
+        (next[0], next[1], next[2]) = (m1, m2, address(council));
+        bytes memory change = abi.encodeCall(Council.setMembers, (next, 2));
+        bytes32 id = _queue(address(council), change);
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(Council.BadMembers.selector);
+        vm.prank(m3);
+        council.execute(id, change);
+        assertFalse(council.isMember(address(council)));
+        assertTrue(council.isMember(m3));
+        address predicted = vm.computeCreateAddress(address(deployer), vm.getNonce(address(deployer)));
+        (next[0], next[1], next[2]) = (m1, m2, predicted);
+        vm.expectRevert(Council.BadMembers.selector);
+        deployer.council(next, 2, 1 days);
+        assertEq(predicted.code.length, 0);
+    }
+
+    /// A member that cancels the revocation of a compromised role is removed by the others
+    /// (it alone cannot cancel its removal), and the revocation then goes through: two delays.
+    function test_a_member_cancelling_a_revocation_is_removed_and_the_revocation_executes() public {
+        bytes memory revoke = abi.encodeCall(token.revokeRole, (token.AGENT_ROLE(), agent));
+        bytes32 first = _queue(address(token), revoke);
+        vm.prank(m3);
+        council.cancel(first);
+        assertTrue(council.proposal(first).cancelled);
+        uint256 started = block.timestamp;
+
+        address replacement = makeAddr("member-4");
+        address[] memory next = new address[](3);
+        (next[0], next[1], next[2]) = (m1, m2, replacement);
+        bytes memory removal = abi.encodeCall(Council.setMembers, (next, 2));
+        bytes32 change = _queue(address(council), removal);
+        vm.prank(m3);
+        council.cancel(change);
+        assertFalse(council.proposal(change).cancelled);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(m1);
+        council.execute(change, removal);
+        assertFalse(council.isMember(m3));
+
+        bytes32 second = _queue(address(token), revoke);
+        vm.expectRevert(abi.encodeWithSelector(Council.NotMember.selector, m3));
+        vm.prank(m3);
+        council.cancel(second);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(replacement);
+        council.execute(second, revoke);
+        assertFalse(token.hasRole(token.AGENT_ROLE(), agent));
+        assertEq(block.timestamp - started, 2 days);
+    }
+
+    /// Governed contracts accept only a council whose runtime code hashes to this. Any edit
+    /// of Council.sol (a comment included: the metadata hash is part of the code) or of the
+    /// compiler settings changes it; docs/ACCESS_CONTROL.md says how to deploy a matching
+    /// council and when to update this value.
+    function test_the_council_runtime_hash_is_the_recorded_one() public view {
+        assertEq(keccak256(type(Council).runtimeCode), COUNCIL_CODEHASH);
+        assertEq(address(council).codehash, COUNCIL_CODEHASH);
+    }
+
+    function _queue(address target, bytes memory data) internal returns (bytes32 id) {
+        vm.prank(m1);
+        id = council.propose(target, data, REASON);
+        vm.prank(m2);
+        council.approve(id);
     }
 
     function test_the_council_changes_its_delay_only_through_itself() public {

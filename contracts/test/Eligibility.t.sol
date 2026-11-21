@@ -94,32 +94,34 @@ contract EligibilityTest is Fixture {
             r = Refusal.ReceiverNotRegistered;
             applies = p != Path.Recover; // the recovery refuses earlier: NotSameInvestor
         } else if (b == BadReceiver.Removed) {
-            _register(to, ALICE_ID, CA);
+            _registerAnotherWallet(to, ALICE_ID, CA);
             vm.prank(registrar);
             registry.remove(to);
             r = Refusal.ReceiverNotRegistered;
         } else if (b == BadReceiver.KycExpired) {
+            vm.prank(address(council));
+            registry.setInvestorId(to, ALICE_ID);
             vm.prank(registrar);
             registry.register(to, ALICE_ID, CA, IdentityRegistry.InvestorType.Retail, uint64(block.timestamp + 1 days));
             vm.warp(block.timestamp + 1 days);
             r = Refusal.ReceiverKycExpired;
         } else if (b == BadReceiver.Frozen) {
-            _register(to, ALICE_ID, CA);
+            _registerAnotherWallet(to, ALICE_ID, CA);
             vm.prank(agent);
             registry.freeze(to);
             r = Refusal.ReceiverFrozen;
         } else if (b == BadReceiver.Country) {
-            _register(to, ALICE_ID, BLOCKED);
+            _registerAnotherWallet(to, ALICE_ID, BLOCKED);
             r = Refusal.ReceiverCountryNotAllowed;
         } else if (b == BadReceiver.MaxHolders) {
-            _register(to, ALICE_ID, US);
+            _registerAnotherWallet(to, ALICE_ID, US);
             uint256 holders = token.holderCount();
             vm.prank(address(council));
             compliance.setMaxHolders(holders);
             r = Refusal.MaxHolders;
             applies = p != Path.Recover;
         } else {
-            _register(to, ALICE_ID, US);
+            _registerAnotherWallet(to, ALICE_ID, US);
             vm.prank(address(council));
             compliance.setMinHolding(p == Path.Recover ? 2000 : 600);
             r = Refusal.ReceiverBelowMinimumHolding;
@@ -458,7 +460,7 @@ contract EligibilityTest is Fixture {
 
     function test_recover_moves_the_whole_balance_and_the_frozen_part_to_the_same_investor() public {
         address replacement = makeAddr("replacement");
-        _register(replacement, ALICE_ID, US);
+        _registerAnotherWallet(replacement, ALICE_ID, US);
         vm.prank(agent);
         token.setFrozenTokens(alice, 300);
         vm.prank(registrar);
@@ -489,7 +491,7 @@ contract EligibilityTest is Fixture {
     /// The proposal names the investor id; both wallets must carry it.
     function test_recover_is_bound_to_the_proposed_investor_id() public {
         address spare = makeAddr("spare-wallet-of-a");
-        _register(spare, ALICE_ID, CA);
+        _registerAnotherWallet(spare, ALICE_ID, CA);
         vm.prank(alice);
         token.transfer(bob, 400);
         vm.startPrank(address(council));
@@ -524,7 +526,7 @@ contract EligibilityTest is Fixture {
 
     function test_recover_leaves_the_frozen_excess_on_the_lost_wallet() public {
         address replacement = makeAddr("replacement");
-        _register(replacement, ALICE_ID, CA);
+        _registerAnotherWallet(replacement, ALICE_ID, CA);
         vm.prank(agent);
         token.setFrozenTokens(alice, 1500);
         vm.prank(address(council));
@@ -568,7 +570,7 @@ contract EligibilityTest is Fixture {
 
     function test_recover_refuses_an_empty_wallet_and_the_same_wallet() public {
         address replacement = makeAddr("replacement");
-        _register(replacement, BOB_ID, US);
+        _registerAnotherWallet(replacement, BOB_ID, US);
         vm.startPrank(address(council));
         vm.expectRevert(abi.encodeWithSelector(PoolToken.NothingToRecover.selector, bob));
         token.recoverWallet(bob, replacement, BOB_ID);
@@ -631,11 +633,14 @@ contract EligibilityTest is Fixture {
     function test_token_wiring_is_checked() public {
         vm.expectRevert(PoolToken.BadDecimals.selector);
         deployer.token(19, address(council), compliance);
-        address[] memory members = new address[](2);
-        (members[0], members[1]) = (m1, m2);
+        address[] memory members = new address[](3);
+        (members[0], members[1], members[2]) = (m1, m2, outsider);
         address other = address(deployer.council(members, 2, 1 days));
         vm.expectRevert(PoolToken.RegistryMismatch.selector);
-        deployer.token(6, other, compliance);
-        assertEq(token.decimals(), 6);
+        deployer.token(DECIMALS, other, compliance);
+        // The compliance module's floor is in the token's units: the decimals must agree.
+        vm.expectRevert(PoolToken.BadDecimals.selector);
+        deployer.token(6, address(council), compliance);
+        assertEq(token.decimals(), DECIMALS);
     }
 }

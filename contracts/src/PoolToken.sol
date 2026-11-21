@@ -58,6 +58,8 @@ contract PoolToken is ERC20, CouncilGoverned, IERC7943Fungible {
         if (address(compliance_) == address(0)) revert ZeroAddress();
         IdentityRegistry registry_ = compliance_.registry();
         if (registry_.council() != council_ || compliance_.council() != council_) revert RegistryMismatch(); // GUARD(token-council-match)
+        // The compliance module's minimum-holding floor is in this token's units.
+        if (compliance_.decimals() != decimals_) revert BadDecimals(); // GUARD(token-decimals-match)
         compliance = compliance_;
         registry = registry_;
         _decimals = decimals_;

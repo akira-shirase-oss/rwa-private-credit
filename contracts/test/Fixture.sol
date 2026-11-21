@@ -38,6 +38,8 @@ abstract contract Fixture is Test {
     uint16 internal constant BLOCKED = 408;
     uint256 internal constant START = 1_700_000_000;
     bytes32 internal constant REASON = keccak256("synthetic-case-record");
+    /// Whole tokens, so the minimum-holding floor (one whole token) is one base unit here.
+    uint8 internal constant DECIMALS = 0;
 
     Council internal council;
     IdentityRegistry internal registry;
@@ -74,9 +76,11 @@ abstract contract Fixture is Test {
         compliance = new ComplianceModule(
             address(council),
             registry,
-            ComplianceModule.Rules({allowedCountries: countries, maxHolders: 50, minHolding: 1, lockupEnd: 0})
+            ComplianceModule.Rules({
+                allowedCountries: countries, maxHolders: 50, minHolding: 1, lockupEnd: 0, decimals: DECIMALS
+            })
         );
-        token = new PoolToken("Synthetic Pool", "SPOOL", 6, address(council), compliance);
+        token = new PoolToken("Synthetic Pool", "SPOOL", DECIMALS, address(council), compliance);
 
         vm.startPrank(address(council));
         registry.grantRole(registry.REGISTRAR_ROLE(), registrar);
@@ -97,6 +101,14 @@ abstract contract Fixture is Test {
         registry.register(
             wallet, id, country, IdentityRegistry.InvestorType.Professional, uint64(block.timestamp + 365 days)
         );
+    }
+
+    /// A second wallet of an investor that already has one: the council binds the id,
+    /// then the registrar registers the wallet under it.
+    function _registerAnotherWallet(address wallet, bytes32 id, uint16 country) internal {
+        vm.prank(address(council));
+        registry.setInvestorId(wallet, id);
+        _register(wallet, id, country);
     }
 
     /// The documented process, in full: propose, a second approval, the delay, execute.

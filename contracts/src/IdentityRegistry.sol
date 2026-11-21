@@ -33,6 +33,9 @@ contract IdentityRegistry is CouncilGoverned {
     }
 
     mapping(address wallet => Identity) private _identities;
+    /// How many wallets carry each investor id. A registrar registers the first; any
+    /// further wallet of the same investor is bound by the council (`setInvestorId`).
+    mapping(bytes32 investorId => uint256) public walletCount;
 
     event IdentityRegistered(
         address indexed wallet, bytes32 indexed investorId, uint16 country, InvestorType investorType, uint64 kycExpiry
@@ -47,6 +50,7 @@ contract IdentityRegistry is CouncilGoverned {
     error NotRegistered(address wallet);
     error BadInvestorId();
     error InvestorIdFixed(address wallet, bytes32 investorId);
+    error InvestorIdTaken(bytes32 investorId);
     error BadCountry(uint16 country);
     error BadInvestorType();
     error BadKycExpiry(uint64 kycExpiry);
@@ -65,10 +69,13 @@ contract IdentityRegistry is CouncilGoverned {
         // A wallet's investor id is written once; only the council rebinds it.
         bytes32 bound = id.investorId;
         if (bound != bytes32(0) && bound != investorId) revert InvestorIdFixed(wallet, bound); // GUARD(registry-investor-id-once)
+        // One wallet per investor id at registration.
+        if (bound == bytes32(0) && walletCount[investorId] != 0) revert InvestorIdTaken(investorId); // GUARD(registry-one-wallet-per-id)
         if (investorType == InvestorType.None) revert BadInvestorType();
         _checkCountry(country);
         _checkKyc(kycExpiry);
         // The frozen flag survives removal and re-registration: only the council clears it.
+        if (bound == bytes32(0)) walletCount[investorId] = 1; // GUARD(registry-registration-counts)
         id.investorId = investorId;
         id.kycExpiry = kycExpiry;
         id.country = country;
@@ -103,12 +110,19 @@ contract IdentityRegistry is CouncilGoverned {
         emit IdentityRemoved(wallet);
     }
 
-    /// Rebinds a wallet to another investor id (a registrar's mistake); the council's alone.
+    /// Binds a wallet to an investor id: a further wallet of an investor, or a correction of
+    /// a registrar's mistake; the council's alone.
     // GUARD(registry-investor-id-council)
     function setInvestorId(address wallet, bytes32 investorId) external onlyCouncil {
         if (wallet == address(0)) revert ZeroAddress();
         if (investorId == bytes32(0)) revert BadInvestorId();
-        _identities[wallet].investorId = investorId;
+        Identity storage id = _identities[wallet];
+        bytes32 previous = id.investorId;
+        if (previous != investorId) {
+            if (previous != bytes32(0)) --walletCount[previous];
+            ++walletCount[investorId]; // GUARD(registry-council-binding-counts)
+            id.investorId = investorId;
+        }
         emit InvestorIdSet(wallet, investorId);
     }
 

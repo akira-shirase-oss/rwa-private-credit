@@ -166,7 +166,7 @@ contract Handler is Test {
 
     function register(uint256 a, uint256 id, uint256 country, uint256 validity) external {
         address who = _actor(a);
-        bytes32 investorId = keccak256(abi.encode("synthetic", id % 4));
+        bytes32 investorId = keccak256(abi.encode("synthetic", id % 8));
         vm.prank(registrar);
         (bool ok,) = address(registry)
             .call(
@@ -182,6 +182,12 @@ contract Handler is Test {
                 )
             );
         ok;
+    }
+
+    /// The council binds a wallet to an investor id (a second wallet, or a correction).
+    function setInvestorId(uint256 a, uint256 id) external {
+        vm.prank(council);
+        registry.setInvestorId(_actor(a), keccak256(abi.encode("synthetic", id % 8)));
     }
 
     function remove(uint256 a) external {
@@ -252,7 +258,8 @@ contract DestinationsAlwaysEligibleTest is Fixture {
         handler = new Handler(token, registrar, agent, minter);
         for (uint256 i = 0; i < handler.actorCount(); ++i) {
             address a = handler.actors(i);
-            if (i < 6) _register(a, keccak256(abi.encode("synthetic", i % 4)), i % 2 == 0 ? CA : US);
+            if (i < 4) _register(a, keccak256(abi.encode("synthetic", i)), i % 2 == 0 ? CA : US);
+            else if (i < 6) _registerAnotherWallet(a, keccak256(abi.encode("synthetic", i % 4)), i % 2 == 0 ? CA : US);
             if (i < 4) {
                 vm.prank(minter);
                 token.mint(a, 10_000);
@@ -276,6 +283,19 @@ contract DestinationsAlwaysEligibleTest is Fixture {
         }
         assertEq(sum, token.totalSupply());
         assertEq(holders, token.holderCount());
+    }
+
+    /// Each synthetic investor id's wallet count is the number of actors carrying it
+    /// (registration counts the first wallet, the council's binding each further one).
+    function invariant_wallet_counts_are_exact() public view {
+        for (uint256 k = 0; k < 8; ++k) {
+            bytes32 id = keccak256(abi.encode("synthetic", k));
+            uint256 carrying;
+            for (uint256 i = 0; i < handler.actorCount(); ++i) {
+                if (registry.investorIdOf(handler.actors(i)) == id) ++carrying;
+            }
+            assertEq(registry.walletCount(id), carrying);
+        }
     }
 
     /// The handler can move by every path (so the campaign is not vacuous) and flags a

@@ -6,6 +6,7 @@ import {Council} from "../src/Council.sol";
 import {CouncilGoverned} from "../src/CouncilGoverned.sol";
 import {IdentityRegistry} from "../src/IdentityRegistry.sol";
 import {PoolToken} from "../src/PoolToken.sol";
+import {Refusal} from "../src/Refusal.sol";
 import {Fixture} from "./Fixture.sol";
 
 contract WeakCouncil {
@@ -282,7 +283,7 @@ contract RolesTest is Fixture {
 
     function test_unauthorised_recover_wallet_refused() public {
         address replacement = makeAddr("replacement");
-        _register(replacement, ALICE_ID, CA);
+        _registerAnotherWallet(replacement, ALICE_ID, CA);
         bytes memory data = abi.encodeCall(PoolToken.recoverWallet, (alice, replacement, ALICE_ID));
         _refusedForAll(address(token), data, Gate.Council, 0, _none());
         _viaCouncil(address(token), data);
@@ -313,8 +314,8 @@ contract RolesTest is Fixture {
     }
 
     function test_unauthorised_set_members_refused() public {
-        address[] memory next = new address[](2);
-        (next[0], next[1]) = (outsider, alice);
+        address[] memory next = new address[](3);
+        (next[0], next[1], next[2]) = (outsider, alice, bob);
         _refusedForAll(address(council), abi.encodeCall(Council.setMembers, (next, 2)), Gate.Self, 0, _none());
     }
 
@@ -327,7 +328,7 @@ contract RolesTest is Fixture {
     function test_no_single_key_moves_a_holders_tokens() public {
         address[8] memory keys = [m1, m2, m3, registrar, agent, minter, outsider, bob];
         address spare = makeAddr("spare-wallet-of-a");
-        _register(spare, ALICE_ID, CA);
+        _registerAnotherWallet(spare, ALICE_ID, CA);
         bytes memory forced = abi.encodeCall(PoolToken.forcedTransfer, (alice, bob, 1000));
         for (uint256 i = 0; i < keys.length; ++i) {
             vm.startPrank(keys[i]);
@@ -369,7 +370,9 @@ contract RolesTest is Fixture {
             deployer.registry(weak[i]);
         }
         assertEq(deployer.registry(address(council)).council(), address(council));
-        address second = address(deployer.council(members, 3, 2 days));
+        address[] memory four = new address[](4);
+        (four[0], four[1], four[2], four[3]) = (m1, m2, m3, outsider);
+        address second = address(deployer.council(four, 3, 2 days));
         assertEq(deployer.registry(second).council(), second);
     }
 
@@ -444,10 +447,125 @@ contract RolesTest is Fixture {
         assertEq(compliance.minHolding(), 1);
         uint16[] memory countries = new uint16[](1);
         countries[0] = CA;
-        ComplianceModule.Rules memory rules =
-            ComplianceModule.Rules({allowedCountries: countries, maxHolders: 50, minHolding: 0, lockupEnd: 0});
+        ComplianceModule.Rules memory rules = ComplianceModule.Rules({
+            allowedCountries: countries, maxHolders: 50, minHolding: 0, lockupEnd: 0, decimals: 0
+        });
         vm.expectRevert(abi.encodeWithSelector(ComplianceModule.BadMinHolding.selector, 0));
         deployer.compliance(address(council), registry, rules);
+    }
+
+    // ----- one wallet per investor id at registration; more only through the council -----
+
+    function test_a_registrar_cannot_register_a_second_wallet_under_an_existing_id() public {
+        uint64 kyc = uint64(block.timestamp + 30 days);
+        vm.expectRevert(abi.encodeWithSelector(IdentityRegistry.InvestorIdTaken.selector, ALICE_ID));
+        vm.prank(registrar);
+        registry.register(outsider, ALICE_ID, CA, IdentityRegistry.InvestorType.Professional, kyc);
+        assertFalse(registry.identityOf(outsider).registered);
+        assertEq(registry.investorIdOf(outsider), bytes32(0));
+        assertEq(registry.walletCount(ALICE_ID), 1);
+        // Removing the first wallet does not free its id: the id stays for recovery.
+        vm.prank(registrar);
+        registry.remove(alice);
+        vm.expectRevert(abi.encodeWithSelector(IdentityRegistry.InvestorIdTaken.selector, ALICE_ID));
+        vm.prank(registrar);
+        registry.register(outsider, ALICE_ID, CA, IdentityRegistry.InvestorType.Professional, kyc);
+        assertFalse(registry.identityOf(outsider).registered);
+        // The council binds the second wallet; then the registrar may register it.
+        vm.prank(address(council));
+        registry.setInvestorId(outsider, ALICE_ID);
+        vm.prank(registrar);
+        registry.register(outsider, ALICE_ID, CA, IdentityRegistry.InvestorType.Professional, kyc);
+        assertTrue(registry.identityOf(outsider).registered);
+        assertEq(registry.walletCount(ALICE_ID), 2);
+    }
+
+    function test_a_council_binding_takes_the_id() public {
+        bytes32 freshId = keccak256("investor-fresh");
+        address first = makeAddr("wallet-fresh-1");
+        address second = makeAddr("wallet-fresh-2");
+        vm.prank(address(council));
+        registry.setInvestorId(first, freshId);
+        assertEq(registry.walletCount(freshId), 1);
+        uint64 kyc = uint64(block.timestamp + 30 days);
+        vm.expectRevert(abi.encodeWithSelector(IdentityRegistry.InvestorIdTaken.selector, freshId));
+        vm.prank(registrar);
+        registry.register(second, freshId, CA, IdentityRegistry.InvestorType.Professional, kyc);
+        assertFalse(registry.identityOf(second).registered);
+        assertEq(registry.investorIdOf(second), bytes32(0));
+        _register(first, freshId, CA);
+        assertTrue(registry.identityOf(first).registered);
+        assertEq(registry.walletCount(freshId), 1);
+    }
+
+    function test_rebinding_a_wallet_away_frees_its_old_id() public {
+        bytes32 rightId = keccak256("investor-right");
+        vm.prank(address(council));
+        registry.setInvestorId(alice, rightId);
+        assertEq(registry.walletCount(ALICE_ID), 0);
+        assertEq(registry.walletCount(rightId), 1);
+        _register(outsider, ALICE_ID, CA);
+        assertEq(registry.investorIdOf(outsider), ALICE_ID);
+        assertEq(registry.walletCount(ALICE_ID), 1);
+        vm.prank(address(council));
+        registry.setInvestorId(alice, rightId);
+        assertEq(registry.walletCount(rightId), 1);
+    }
+
+    // ----- the minimum holding: at least one whole token, so a holder slot has a price -----
+
+    function _rules(uint256 minHolding, uint8 decimals_) internal view returns (ComplianceModule.Rules memory) {
+        uint16[] memory countries = new uint16[](1);
+        countries[0] = CA;
+        return ComplianceModule.Rules({
+            allowedCountries: countries, maxHolders: 50, minHolding: minHolding, lockupEnd: 0, decimals: decimals_
+        });
+    }
+
+    function test_minimum_holding_is_at_least_one_whole_token() public {
+        vm.expectRevert(abi.encodeWithSelector(ComplianceModule.BadMinHolding.selector, 1e6 - 1));
+        deployer.compliance(address(council), registry, _rules(1e6 - 1, 6));
+        ComplianceModule six = deployer.compliance(address(council), registry, _rules(1e6, 6));
+        assertEq(six.minHolding(), 1e6);
+        assertEq(six.decimals(), 6);
+        vm.expectRevert(abi.encodeWithSelector(ComplianceModule.BadMinHolding.selector, 1e6 - 1));
+        vm.prank(address(council));
+        six.setMinHolding(1e6 - 1);
+        assertEq(six.minHolding(), 1e6);
+        vm.expectRevert(abi.encodeWithSelector(ComplianceModule.BadDecimals.selector, 19));
+        deployer.compliance(address(council), registry, _rules(1e19, 19));
+    }
+
+    /// The stated bound: filling `free` empty holder slots takes at least `free` x the
+    /// minimum holding, each part in a separate registered investor's wallet.
+    function testFuzz_filling_the_free_holder_slots_costs_free_times_the_minimum(uint256 free, uint256 minimum) public {
+        free = bound(free, 1, 8);
+        minimum = bound(minimum, 2, 100);
+        uint256 holders = token.holderCount();
+        vm.startPrank(address(council));
+        compliance.setMinHolding(minimum);
+        compliance.setMaxHolders(holders + free);
+        vm.stopPrank();
+        vm.prank(minter);
+        token.mint(alice, free * minimum);
+        uint256 aliceBefore = token.balanceOf(alice);
+        for (uint256 i = 0; i < free; ++i) {
+            address slot = makeAddr(string.concat("slot-", vm.toString(i)));
+            _register(slot, keccak256(abi.encode("slot-investor", i)), CA);
+            vm.expectRevert(_refused(alice, slot, minimum - 1, Refusal.ReceiverBelowMinimumHolding));
+            vm.prank(alice);
+            token.transfer(slot, minimum - 1);
+            vm.prank(alice);
+            token.transfer(slot, minimum);
+        }
+        assertEq(token.holderCount(), holders + free);
+        assertEq(aliceBefore - token.balanceOf(alice), free * minimum);
+        address extra = makeAddr("slot-extra");
+        _register(extra, keccak256("slot-investor-extra"), CA);
+        vm.expectRevert(_refused(alice, extra, minimum, Refusal.MaxHolders));
+        vm.prank(alice);
+        token.transfer(extra, minimum);
+        assertEq(token.balanceOf(extra), 0);
     }
 
     // ----- registry inputs -----

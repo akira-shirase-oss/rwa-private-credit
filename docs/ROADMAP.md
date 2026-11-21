@@ -23,11 +23,15 @@ holding, the frozen release on council moves, `FrozenTokensChanged` naming who a
 `canTransfer` past the balance recorded (D-005), `guards.json` uploaded by the `guards`
 job, the daily run drawing and logging its fuzz seed, and GUARD markers on the token's
 wiring check, both `SameWallet` checks, the proposal target and reason checks and
-`grantRole`'s zero address. Still open:
+`grantRole`'s zero address. Fixed in the re-check (D-006): one wallet per investor id at
+registration (further wallets bound by the council), a minimum holding of at least one
+whole token, a threshold below the member count, the council never its own member, and the
+council's code hash recorded in CI. Still open:
 
 | Item | Where it lands |
 |---|---|
 | Static analysis (Slither or equivalent), pinned, in CI | M2, before the pool contract |
 | Mint has no cap and no backing in M1; supply conservation (minted = subscribed) | M2: `CreditPool` holds `MINTER_ROLE`; conservation test there |
-| Holder cap counted by distinct investor id instead of wallets (if subscriptions need it) | M2 decision |
+| Holder cap counted by distinct investor id instead of wallets (if subscriptions need it; `walletCount` is in the registry) | M2 decision |
+| Guard-proof harness gaps (a) and (b) from the M1 re-check | the standard harness rollout |
 | `AGENTS.md` status line kept current with each milestone | every milestone |
