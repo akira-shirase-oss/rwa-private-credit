@@ -35,6 +35,8 @@ contract PoolToken is ERC20, CouncilGoverned, IERC7943Fungible {
     event Paused(address indexed by);
     event Unpaused(address indexed by);
     event WalletRecovered(address indexed lost, address indexed replacement, uint256 amount);
+    /// Emitted with every ERC-7943 `Frozen`, naming who changed the frozen amount.
+    event FrozenTokensChanged(address indexed account, uint256 amount, address indexed by);
 
     error TransferRefused(address from, address to, uint256 amount, Refusal reason);
     error BatchTooLarge(uint256 length);
@@ -55,7 +57,7 @@ contract PoolToken is ERC20, CouncilGoverned, IERC7943Fungible {
         if (decimals_ > 18) revert BadDecimals();
         if (address(compliance_) == address(0)) revert ZeroAddress();
         IdentityRegistry registry_ = compliance_.registry();
-        if (registry_.council() != council_ || compliance_.council() != council_) revert RegistryMismatch();
+        if (registry_.council() != council_ || compliance_.council() != council_) revert RegistryMismatch(); // GUARD(token-council-match)
         compliance = compliance_;
         registry = registry_;
         _decimals = decimals_;
@@ -117,25 +119,21 @@ contract PoolToken is ERC20, CouncilGoverned, IERC7943Fungible {
         } else {
             _onlyRoleOrCouncil(AGENT_ROLE); // GUARD(token-freeze-role)
         }
-        _frozenTokens[account] = amount;
-        emit Frozen(account, amount);
+        _setFrozen(account, amount);
         return true;
     }
 
     // ----- council-only moves of a holder's tokens -----
 
-    /// ERC-7943. Skips the sender's rules and the frozen amount (released first, with a
-    /// `Frozen` event), never the receiver's. The council's proposal records the reason.
+    /// ERC-7943. Skips the sender's rules and the frozen amount (the unfrozen part moves
+    /// first; only the rest is released, with a `Frozen` event), never the receiver's. The
+    /// council's proposal records the reason.
     // GUARD(token-forced-council)
     function forcedTransfer(address from, address to, uint256 amount) external onlyCouncil returns (bool) {
-        if (from == to) revert SameWallet();
+        if (from == to) revert SameWallet(); // GUARD(forced-same-wallet)
         uint256 balance = balanceOf(from);
         if (amount > balance) revert ERC20InsufficientBalance(from, balance, amount);
-        uint256 frozen = _frozenTokens[from];
-        if (frozen > balance - amount) {
-            _frozenTokens[from] = balance - amount;
-            emit Frozen(from, balance - amount);
-        }
+        _releaseFrozen(from, balance, amount);
         _forcing = true;
         _transfer(from, to, amount); // GUARD(path-forced)
         _forcing = false;
@@ -144,30 +142,22 @@ contract PoolToken is ERC20, CouncilGoverned, IERC7943Fungible {
     }
 
     /// Moves a lost wallet's whole balance, frozen part included, to a new wallet of the
-    /// same investor; the new wallet must pass every receiver rule.
+    /// same investor; the new wallet must pass every receiver rule. The proposal names the
+    /// investor id, and both wallets must carry it when the call executes.
     // GUARD(token-recover-council)
-    function recoverWallet(address lost, address replacement) external onlyCouncil returns (bool) {
-        if (lost == replacement) revert SameWallet();
-        bytes32 investorId = registry.investorIdOf(lost);
+    function recoverWallet(address lost, address replacement, bytes32 investorId) external onlyCouncil returns (bool) {
+        if (lost == replacement) revert SameWallet(); // GUARD(recover-same-wallet)
+        if (registry.investorIdOf(lost) != investorId) revert NotSameInvestor(lost, replacement); // GUARD(recover-expected-investor)
         if (investorId == bytes32(0) || investorId != registry.investorIdOf(replacement)) {
             revert NotSameInvestor(lost, replacement); // GUARD(recover-same-investor)
         }
         uint256 amount = balanceOf(lost);
         if (amount == 0) revert NothingToRecover(lost);
-        uint256 frozen = _frozenTokens[lost];
-        if (frozen > amount) frozen = amount;
-        if (_frozenTokens[lost] != 0) {
-            _frozenTokens[lost] = 0;
-            emit Frozen(lost, 0);
-        }
+        uint256 frozen = _releaseFrozen(lost, amount, amount);
         _forcing = true;
         _transfer(lost, replacement, amount); // GUARD(path-recover)
         _forcing = false;
-        if (frozen != 0) {
-            uint256 moved = _frozenTokens[replacement] + frozen;
-            _frozenTokens[replacement] = moved;
-            emit Frozen(replacement, moved);
-        }
+        if (frozen != 0) _setFrozen(replacement, _frozenTokens[replacement] + frozen);
         emit ForcedTransfer(lost, replacement, amount);
         emit WalletRecovered(lost, replacement, amount);
         return true;
@@ -187,6 +177,8 @@ contract PoolToken is ERC20, CouncilGoverned, IERC7943Fungible {
         return _frozenTokens[account];
     }
 
+    /// More than the balance is always more than the unfrozen amount, which ERC-7943 says
+    /// canTransfer MUST check, so it returns false (docs/DECISIONS.md D-005).
     function canTransfer(address from, address to, uint256 amount) external view returns (bool) {
         (Refusal r,) = _refusal(from, to, amount, false);
         return r == Refusal.None;
@@ -235,6 +227,23 @@ contract PoolToken is ERC20, CouncilGoverned, IERC7943Fungible {
         }
         Refusal r = compliance.transferRefusal(from, to, fromAfter, toAfter, holdersAfter, newHolder, forced);
         return (r, holdersAfter);
+    }
+
+    function _setFrozen(address account, uint256 amount) private {
+        _frozenTokens[account] = amount;
+        emit Frozen(account, amount);
+        emit FrozenTokensChanged(account, amount, msg.sender);
+    }
+
+    /// Before a council move of `amount` out of `balance`: the unfrozen part goes first and
+    /// only the rest of `amount` is released from the frozen amount, which it returns.
+    function _releaseFrozen(address from, uint256 balance, uint256 amount) private returns (uint256 released) {
+        uint256 frozen = _frozenTokens[from];
+        uint256 unfrozen = balance > frozen ? balance - frozen : 0;
+        if (amount > unfrozen) {
+            released = amount - unfrozen;
+            _setFrozen(from, frozen - released); // GUARD(frozen-release)
+        }
     }
 
     function _unfrozen(address account, uint256 balance) private view returns (uint256) {

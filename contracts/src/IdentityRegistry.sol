@@ -40,11 +40,13 @@ contract IdentityRegistry is CouncilGoverned {
     event KycUpdated(address indexed wallet, uint64 kycExpiry);
     event CountryUpdated(address indexed wallet, uint16 country);
     event IdentityRemoved(address indexed wallet);
+    event InvestorIdSet(address indexed wallet, bytes32 indexed investorId);
     event WalletFrozen(address indexed wallet, bool frozen, address indexed by);
 
     error AlreadyRegistered(address wallet);
     error NotRegistered(address wallet);
     error BadInvestorId();
+    error InvestorIdFixed(address wallet, bytes32 investorId);
     error BadCountry(uint16 country);
     error BadInvestorType();
     error BadKycExpiry(uint64 kycExpiry);
@@ -60,6 +62,9 @@ contract IdentityRegistry is CouncilGoverned {
         Identity storage id = _identities[wallet];
         if (id.registered) revert AlreadyRegistered(wallet);
         if (investorId == bytes32(0)) revert BadInvestorId();
+        // A wallet's investor id is written once; only the council rebinds it.
+        bytes32 bound = id.investorId;
+        if (bound != bytes32(0) && bound != investorId) revert InvestorIdFixed(wallet, bound); // GUARD(registry-investor-id-once)
         if (investorType == InvestorType.None) revert BadInvestorType();
         _checkCountry(country);
         _checkKyc(kycExpiry);
@@ -96,6 +101,15 @@ contract IdentityRegistry is CouncilGoverned {
         id.registered = false;
         id.kycExpiry = 0;
         emit IdentityRemoved(wallet);
+    }
+
+    /// Rebinds a wallet to another investor id (a registrar's mistake); the council's alone.
+    // GUARD(registry-investor-id-council)
+    function setInvestorId(address wallet, bytes32 investorId) external onlyCouncil {
+        if (wallet == address(0)) revert ZeroAddress();
+        if (investorId == bytes32(0)) revert BadInvestorId();
+        _identities[wallet].investorId = investorId;
+        emit InvestorIdSet(wallet, investorId);
     }
 
     /// Freezing protects, so an agent may do it at once; unfreezing is the council's.

@@ -113,6 +113,14 @@ jobs:
       # Foundry v1.10.0, checked against the SHA-256 recorded in the script.
       - name: Foundry (pinned by version and checksum)
         run: scripts/install-foundry.sh "$RUNNER_TEMP/bin" && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # Pushes keep the fixed seed in foundry.toml (reproducible); the daily run draws a
+      # new one and logs it, so a failure replays with FOUNDRY_FUZZ_SEED=<logged seed>.
+      - name: Rotate the fuzz seed on the daily run
+        if: github.event_name == 'schedule'
+        run: |
+          seed="0x$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          echo "fuzz seed: $seed"
+          echo "FOUNDRY_FUZZ_SEED=$seed" >> "$GITHUB_ENV"
       - name: The contracts gate
         run: scripts/check-contracts.sh
 
@@ -129,3 +137,11 @@ jobs:
         run: scripts/install-foundry.sh "$RUNNER_TEMP/bin" && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Prove every guard
         run: scripts/prove-guards.sh --out "$RUNNER_TEMP/guards.json"
+      - name: Keep the guard proofs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: guards
+          path: ${{ runner.temp }}/guards.json
+          if-no-files-found: error
+          retention-days: 90

@@ -1,20 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity 0.8.30;
 
-interface ICouncilParameters {
-    function threshold() external view returns (uint256);
-    function delay() external view returns (uint256);
-}
+import {Council} from "./Council.sol";
 
 /// Roles whose only administrator is an immutable council (docs/ACCESS_CONTROL.md). There
 /// is no admin role to hand over: the council grants and revokes every role, and the
 /// council is fixed at deployment. A holder may renounce its own role.
 abstract contract CouncilGoverned {
-    /// The fewest approvals and the shortest delay a council may have (Council enforces
-    /// the same bounds; checked here so no contract is ever governed by a single key).
-    uint256 internal constant MIN_COUNCIL_THRESHOLD = 2;
-    uint256 internal constant MIN_COUNCIL_DELAY = 1 days;
-
     address public immutable council;
     mapping(bytes32 role => mapping(address account => bool)) private _roles;
 
@@ -27,9 +19,9 @@ abstract contract CouncilGoverned {
     error ZeroAddress();
 
     constructor(address council_) {
-        if (council_.code.length == 0) revert CouncilTooWeak(council_); // GUARD(council-is-contract)
-        ICouncilParameters c = ICouncilParameters(council_);
-        if (c.threshold() < MIN_COUNCIL_THRESHOLD || c.delay() < MIN_COUNCIL_DELAY) revert CouncilTooWeak(council_); // GUARD(council-strength)
+        // Only this repository's Council code, which enforces M >= 2 distinct members and a
+        // delay of at least a day; it has no immutables, so its runtime hash is fixed.
+        if (council_.codehash != keccak256(type(Council).runtimeCode)) revert CouncilTooWeak(council_); // GUARD(council-code)
         council = council_;
     }
 
@@ -54,7 +46,7 @@ abstract contract CouncilGoverned {
 
     // GUARD(grant-role)
     function grantRole(bytes32 role, address account) external onlyCouncil {
-        if (account == address(0)) revert ZeroAddress();
+        if (account == address(0)) revert ZeroAddress(); // GUARD(grant-role-nonzero)
         if (!_roles[role][account]) {
             _roles[role][account] = true;
             emit RoleGranted(role, account);

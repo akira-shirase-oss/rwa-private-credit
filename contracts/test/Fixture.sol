@@ -19,6 +19,13 @@ contract Deployer {
         return new IdentityRegistry(council_);
     }
 
+    function compliance(address council_, IdentityRegistry registry_, ComplianceModule.Rules memory rules)
+        external
+        returns (ComplianceModule)
+    {
+        return new ComplianceModule(council_, registry_, rules);
+    }
+
     function token(uint8 decimals_, address council_, ComplianceModule compliance_) external returns (PoolToken) {
         return new PoolToken("x", "x", decimals_, council_, compliance_);
     }
@@ -67,7 +74,7 @@ abstract contract Fixture is Test {
         compliance = new ComplianceModule(
             address(council),
             registry,
-            ComplianceModule.Rules({allowedCountries: countries, maxHolders: 50, minHolding: 0, lockupEnd: 0})
+            ComplianceModule.Rules({allowedCountries: countries, maxHolders: 50, minHolding: 1, lockupEnd: 0})
         );
         token = new PoolToken("Synthetic Pool", "SPOOL", 6, address(council), compliance);
 

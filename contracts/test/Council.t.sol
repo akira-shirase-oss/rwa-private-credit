@@ -112,6 +112,101 @@ contract CouncilTest is Fixture {
         assertFalse(council.proposal(id).executed);
     }
 
+    // ----- stopping a call: revoke before it queues, cancel before it executes -----
+
+    function test_a_member_cancels_a_queued_call_before_execution() public {
+        bytes32 id = _proposeAndApprove();
+        vm.expectEmit(address(council));
+        emit Council.Cancelled(id);
+        vm.prank(m3);
+        council.cancel(id);
+        assertTrue(council.proposal(id).cancelled);
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(abi.encodeWithSelector(Council.ProposalCancelled.selector, id));
+        vm.prank(m1);
+        council.execute(id, call_);
+        vm.expectRevert(abi.encodeWithSelector(Council.ProposalCancelled.selector, id));
+        vm.prank(m3);
+        council.approve(id);
+        assertEq(token.balanceOf(alice), 1000);
+        assertEq(token.balanceOf(bob), 0);
+    }
+
+    /// One member cannot block the council changing itself (removing that member); it
+    /// takes N - M + 1 members, the most that could ever refuse to approve.
+    function test_a_single_member_cannot_cancel_the_councils_own_change() public {
+        bytes memory change = abi.encodeCall(Council.setDelay, (3 days));
+        vm.prank(m1);
+        bytes32 id = council.propose(address(council), change, REASON);
+        vm.prank(m2);
+        council.approve(id);
+        assertEq(council.vetoesNeeded(address(council)), 2);
+        assertEq(council.vetoesNeeded(address(token)), 1);
+        vm.prank(m3);
+        council.cancel(id);
+        vm.expectRevert(abi.encodeWithSelector(Council.AlreadyVetoed.selector, id, m3));
+        vm.prank(m3);
+        council.cancel(id);
+        assertFalse(council.proposal(id).cancelled);
+        assertEq(council.proposal(id).vetoes, 1);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(m1);
+        council.execute(id, change);
+        assertEq(council.delay(), 3 days);
+    }
+
+    function test_n_minus_m_plus_one_members_cancel_the_councils_own_change() public {
+        bytes memory change = abi.encodeCall(Council.setDelay, (3 days));
+        vm.prank(m1);
+        bytes32 id = council.propose(address(council), change, REASON);
+        vm.prank(m2);
+        council.approve(id);
+        vm.prank(m3);
+        council.cancel(id);
+        vm.prank(m1);
+        council.cancel(id);
+        assertTrue(council.proposal(id).cancelled);
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(abi.encodeWithSelector(Council.ProposalCancelled.selector, id));
+        vm.prank(m2);
+        council.execute(id, change);
+        assertEq(council.delay(), 1 days);
+    }
+
+    function test_a_revoked_approval_does_not_count() public {
+        vm.prank(m1);
+        bytes32 id = council.propose(address(token), call_, REASON);
+        vm.prank(m1);
+        council.revokeApproval(id);
+        assertFalse(council.hasApproved(id, m1));
+        vm.prank(m2);
+        council.approve(id);
+        assertEq(council.proposal(id).approvals, 1);
+        assertEq(council.proposal(id).eta, 0);
+        vm.warp(block.timestamp + 2 days);
+        vm.expectRevert(abi.encodeWithSelector(Council.NotQueued.selector, id));
+        vm.prank(m2);
+        council.execute(id, call_);
+        assertEq(token.balanceOf(bob), 0);
+    }
+
+    function test_an_approval_is_revoked_only_before_it_queues_and_only_if_given() public {
+        bytes32 id = _proposeAndApprove();
+        uint64 eta = council.proposal(id).eta;
+        vm.expectRevert(abi.encodeWithSelector(Council.AlreadyQueued.selector, id));
+        vm.prank(m2);
+        council.revokeApproval(id);
+        assertEq(council.proposal(id).approvals, 2);
+        assertEq(council.proposal(id).eta, eta);
+        assertTrue(council.hasApproved(id, m2));
+        vm.prank(m1);
+        bytes32 other = council.propose(address(token), call_, REASON);
+        vm.expectRevert(abi.encodeWithSelector(Council.NotApproved.selector, other, m2));
+        vm.prank(m2);
+        council.revokeApproval(other);
+        assertEq(council.proposal(other).approvals, 1);
+    }
+
     function test_proposals_need_a_contract_target_and_a_reason() public {
         vm.startPrank(m1);
         vm.expectRevert(abi.encodeWithSelector(Council.BadTarget.selector, outsider));

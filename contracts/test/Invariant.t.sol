@@ -156,8 +156,9 @@ contract Handler is Test {
     function recoverWallet(uint256 a, uint256 b) external {
         (address lost, address replacement) = (_actor(a), _actor(b));
         bool allowed = _destinationOk(lost, replacement, token.balanceOf(lost));
+        bytes32 investorId = registry.investorIdOf(lost);
         vm.prank(council);
-        (bool ok,) = address(token).call(abi.encodeCall(PoolToken.recoverWallet, (lost, replacement)));
+        (bool ok,) = address(token).call(abi.encodeCall(PoolToken.recoverWallet, (lost, replacement, investorId)));
         _record("recoverWallet", ok, allowed);
     }
 
@@ -231,7 +232,7 @@ contract Handler is Test {
     function setRules(uint256 maxHolders, uint256 minHolding, uint256 lockup, uint256 country, bool allowed) external {
         vm.startPrank(council);
         compliance.setMaxHolders(bound(maxHolders, 1, 8));
-        compliance.setMinHolding(bound(minHolding, 0, 1000));
+        compliance.setMinHolding(bound(minHolding, 1, 1000));
         compliance.setLockupEnd(uint64(block.timestamp + bound(lockup, 0, 3 days)) - 1 days);
         compliance.setCountryAllowed(countries[country % 4], allowed);
         vm.stopPrank();

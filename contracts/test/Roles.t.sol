@@ -21,6 +21,15 @@ contract WeakCouncil {
 /// with its own error, and the stored state re-read afterwards is unchanged. The callers
 /// tried include a single council member, the other roles and a holder; only the council
 /// contract (the M-of-N, delayed process) or the named role gets through.
+/// A modified Council: the same parameters, one extra function.
+contract ForkedCouncil is Council {
+    constructor(address[] memory members_) Council(members_, 2, 1 days) {}
+
+    function extra() external pure returns (uint256) {
+        return 1;
+    }
+}
+
 contract RolesTest is Fixture {
     address[] internal callers;
 
@@ -274,7 +283,7 @@ contract RolesTest is Fixture {
     function test_unauthorised_recover_wallet_refused() public {
         address replacement = makeAddr("replacement");
         _register(replacement, ALICE_ID, CA);
-        bytes memory data = abi.encodeCall(PoolToken.recoverWallet, (alice, replacement));
+        bytes memory data = abi.encodeCall(PoolToken.recoverWallet, (alice, replacement, ALICE_ID));
         _refusedForAll(address(token), data, Gate.Council, 0, _none());
         _viaCouncil(address(token), data);
         assertEq(token.balanceOf(replacement), 1000);
@@ -324,7 +333,7 @@ contract RolesTest is Fixture {
             vm.startPrank(keys[i]);
             (bool ok,) = address(token).call(forced);
             assertFalse(ok);
-            (ok,) = address(token).call(abi.encodeCall(PoolToken.recoverWallet, (alice, spare)));
+            (ok,) = address(token).call(abi.encodeCall(PoolToken.recoverWallet, (alice, spare, ALICE_ID)));
             assertFalse(ok);
             (ok,) = address(token).call(abi.encodeCall(token.transferFrom, (alice, bob, 1)));
             assertFalse(ok);
@@ -344,13 +353,101 @@ contract RolesTest is Fixture {
     // ----- a contract is never governed by a single key -----
 
     function test_a_weak_council_is_refused_at_deployment() public {
-        address[3] memory weak = [address(new WeakCouncil(1, 1 days)), address(new WeakCouncil(2, 1 hours)), outsider];
+        address[] memory members = new address[](3);
+        (members[0], members[1], members[2]) = (m1, m2, m3);
+        // Reporting a strong threshold and delay is not enough: only this repository's
+        // Council code, which enforces them, is accepted.
+        address[5] memory weak = [
+            address(new WeakCouncil(1, 1 days)),
+            address(new WeakCouncil(2, 1 hours)),
+            address(new WeakCouncil(2, 1 days)),
+            address(new ForkedCouncil(members)),
+            outsider
+        ];
         for (uint256 i = 0; i < weak.length; ++i) {
             vm.expectRevert(abi.encodeWithSelector(CouncilGoverned.CouncilTooWeak.selector, weak[i]));
             deployer.registry(weak[i]);
         }
-        deployer.registry(address(new WeakCouncil(2, 1 days)));
         assertEq(deployer.registry(address(council)).council(), address(council));
+        address second = address(deployer.council(members, 3, 2 days));
+        assertEq(deployer.registry(second).council(), second);
+    }
+
+    // ----- the council's own stop: cancel and revoke -----
+
+    function test_unauthorised_cancel_refused() public {
+        vm.prank(m1);
+        bytes32 id = council.propose(address(token), abi.encodeCall(PoolToken.unpause, ()), REASON);
+        _refusedForAll(address(council), abi.encodeCall(Council.cancel, (id)), Gate.Member, 0, _members());
+        assertFalse(council.proposal(id).cancelled);
+        assertEq(council.proposal(id).vetoes, 0);
+    }
+
+    function test_unauthorised_revoke_approval_refused() public {
+        vm.prank(m1);
+        bytes32 id = council.propose(address(token), abi.encodeCall(PoolToken.unpause, ()), REASON);
+        _refusedForAll(address(council), abi.encodeCall(Council.revokeApproval, (id)), Gate.Member, 0, _members());
+        assertEq(council.proposal(id).approvals, 1);
+        assertTrue(council.hasApproved(id, m1));
+    }
+
+    // ----- an investor id, once bound to a wallet, moves only through the council -----
+
+    function test_unauthorised_set_investor_id_refused() public {
+        bytes memory data = abi.encodeCall(IdentityRegistry.setInvestorId, (alice, BOB_ID));
+        _refusedForAll(address(registry), data, Gate.Council, 0, _none());
+        assertEq(registry.investorIdOf(alice), ALICE_ID);
+        _viaCouncil(address(registry), data);
+        assertEq(registry.investorIdOf(alice), BOB_ID);
+    }
+
+    function test_a_wallets_investor_id_is_fixed_once_set() public {
+        address attacker = makeAddr("wallet-of-x");
+        bytes32 xId = keccak256("investor-x");
+        _register(attacker, xId, CA);
+        uint64 kyc = uint64(block.timestamp + 30 days);
+        vm.startPrank(registrar);
+        registry.remove(attacker);
+        vm.expectRevert(abi.encodeWithSelector(IdentityRegistry.InvestorIdFixed.selector, attacker, xId));
+        registry.register(attacker, ALICE_ID, CA, IdentityRegistry.InvestorType.Professional, kyc);
+        assertEq(registry.investorIdOf(attacker), xId);
+        assertFalse(registry.identityOf(attacker).registered);
+        registry.register(attacker, xId, CA, IdentityRegistry.InvestorType.Professional, kyc);
+        vm.stopPrank();
+        assertEq(registry.investorIdOf(attacker), xId);
+        vm.expectRevert(abi.encodeWithSelector(PoolToken.NotSameInvestor.selector, alice, attacker));
+        vm.prank(address(council));
+        token.recoverWallet(alice, attacker, ALICE_ID);
+        assertEq(token.balanceOf(alice), 1000);
+        assertEq(token.balanceOf(attacker), 0);
+    }
+
+    function test_set_investor_id_refuses_the_zero_id() public {
+        vm.expectRevert(IdentityRegistry.BadInvestorId.selector);
+        vm.prank(address(council));
+        registry.setInvestorId(alice, bytes32(0));
+        assertEq(registry.investorIdOf(alice), ALICE_ID);
+    }
+
+    function test_grant_role_refuses_the_zero_address() public {
+        bytes32 role = token.MINTER_ROLE();
+        vm.expectRevert(CouncilGoverned.ZeroAddress.selector);
+        vm.prank(address(council));
+        token.grantRole(role, address(0));
+        assertFalse(token.hasRole(role, address(0)));
+    }
+
+    function test_minimum_holding_is_never_zero() public {
+        vm.expectRevert(abi.encodeWithSelector(ComplianceModule.BadMinHolding.selector, 0));
+        vm.prank(address(council));
+        compliance.setMinHolding(0);
+        assertEq(compliance.minHolding(), 1);
+        uint16[] memory countries = new uint16[](1);
+        countries[0] = CA;
+        ComplianceModule.Rules memory rules =
+            ComplianceModule.Rules({allowedCountries: countries, maxHolders: 50, minHolding: 0, lockupEnd: 0});
+        vm.expectRevert(abi.encodeWithSelector(ComplianceModule.BadMinHolding.selector, 0));
+        deployer.compliance(address(council), registry, rules);
     }
 
     // ----- registry inputs -----

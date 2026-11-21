@@ -6,8 +6,9 @@ vouched for it.
 
 Contract: `docs/END_GOAL.md` (what done means, scope, the required failure cases and
 their drills, the ship gate); the verified facts it rests on are in
-`docs/KNOWLEDGE.md`. Status: **base setup only — nothing of the product is built yet**;
-the running code is the renamed Backend Platform starter template.
+`docs/KNOWLEDGE.md`. Status: **M1 contracts in review** (registry, compliance, token,
+council under `contracts/`); the off-chain services are still the renamed Backend
+Platform starter template. `docs/ROADMAP.md` is the current status.
 
 ## Read first
 

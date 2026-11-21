@@ -42,3 +42,19 @@ There are no proxies: an upgrade is a new deployment. The written model is
 docs/ACCESS_CONTROL.md. The `credit` integer mirror is M3's (END_GOAL invariant 3): M1
 has no arithmetic beyond balance and holder counts, so no mirror is built here.
 
+
+## D-005 — M1 review: how the council stops a call, and `canTransfer` past the balance
+
+The council being immutable, its stop is in M1: `revokeApproval` before a call queues and
+`cancel` before it executes, one member for a call to another contract (stopping is
+protective, like a pause) and `N - M + 1` for a call to the council itself, so a member
+cannot veto its own removal. Governed contracts accept only this repository's `Council`
+runtime code, by hash, not what an address reports. The minimum holding is required to be
+non-zero rather than counting holders by investor id, which would need the registry in
+the balance hook's count and is left for M2 if subscriptions need it (docs/ROADMAP.md).
+
+ERC-7943 says `canTransfer` MUST NOT return false on a balance check and MUST check the
+amount against the unfrozen amount. An amount above the balance is always above the
+unfrozen amount, so the second rule decides: `canTransfer` returns false and
+`transferRefusal` names `InsufficientBalance`. This is the recorded reading of the two
+rules, not a deviation from the interface (id `0x3edbb4c4`).

@@ -14,3 +14,20 @@ tests and evidence.
 | M5 | 5 | Investor portal: onboarding, invest, claim, dashboard | Case 12; end-to-end with 3 investor wallets | Planned |
 | M6 | 6 | Secondary market, attestations, Typst reports | Cases 5 (attested), 10 and 11 | Planned |
 | M7 | 7–8 | Demo binary, L1 full run, review, docs, UI audit, deploy, video | Ship gate | Planned |
+
+## Tracked from the M1 independent review (S4)
+
+Fixed in the M1 pass: the council's stop (`cancel`, `revokeApproval`), the council code
+check, the write-once investor id and `recoverWallet`'s named id, a non-zero minimum
+holding, the frozen release on council moves, `FrozenTokensChanged` naming who acted,
+`canTransfer` past the balance recorded (D-005), `guards.json` uploaded by the `guards`
+job, the daily run drawing and logging its fuzz seed, and GUARD markers on the token's
+wiring check, both `SameWallet` checks, the proposal target and reason checks and
+`grantRole`'s zero address. Still open:
+
+| Item | Where it lands |
+|---|---|
+| Static analysis (Slither or equivalent), pinned, in CI | M2, before the pool contract |
+| Mint has no cap and no backing in M1; supply conservation (minted = subscribed) | M2: `CreditPool` holds `MINTER_ROLE`; conservation test there |
+| Holder cap counted by distinct investor id instead of wallets (if subscriptions need it) | M2 decision |
+| `AGENTS.md` status line kept current with each milestone | every milestone |

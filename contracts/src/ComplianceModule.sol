@@ -35,6 +35,7 @@ contract ComplianceModule is CouncilGoverned {
     error BadCountry(uint16 country);
     error BadMaxHolders(uint256 maxHolders);
     error BadLockupEnd(uint64 lockupEnd);
+    error BadMinHolding(uint256 minHolding);
 
     constructor(address council_, IdentityRegistry registry_, Rules memory rules) CouncilGoverned(council_) {
         if (address(registry_) == address(0)) revert ZeroAddress();
@@ -116,7 +117,10 @@ contract ComplianceModule is CouncilGoverned {
         emit MaxHoldersSet(maxHolders_);
     }
 
+    /// Never zero: every holder slot then costs at least the minimum, so empty wallets
+    /// cannot be filled with dust to reach the holder cap.
     function _setMinHolding(uint256 minHolding_) private {
+        if (minHolding_ == 0) revert BadMinHolding(minHolding_); // GUARD(min-holding-positive)
         minHolding = minHolding_;
         emit MinHoldingSet(minHolding_);
     }

@@ -165,7 +165,7 @@ contract EligibilityTest is Fixture {
             token.forcedTransfer(alice, to, amount);
         } else {
             vm.prank(address(council));
-            token.recoverWallet(alice, to);
+            token.recoverWallet(alice, to, ALICE_ID);
         }
     }
 
@@ -464,7 +464,7 @@ contract EligibilityTest is Fixture {
         vm.prank(registrar);
         registry.remove(alice);
         vm.prank(address(council));
-        token.recoverWallet(alice, replacement);
+        token.recoverWallet(alice, replacement, ALICE_ID);
         assertEq(token.balanceOf(alice), 0);
         assertEq(token.balanceOf(replacement), 1000);
         assertEq(token.getFrozenTokens(alice), 0);
@@ -477,13 +477,93 @@ contract EligibilityTest is Fixture {
         for (uint256 i = 0; i < 2; ++i) {
             vm.expectRevert(abi.encodeWithSelector(PoolToken.NotSameInvestor.selector, alice, others[i]));
             vm.prank(address(council));
-            token.recoverWallet(alice, others[i]);
+            token.recoverWallet(alice, others[i], ALICE_ID);
         }
         vm.expectRevert(abi.encodeWithSelector(PoolToken.NotSameInvestor.selector, outsider, alice));
         vm.prank(address(council));
-        token.recoverWallet(outsider, alice);
+        token.recoverWallet(outsider, alice, ALICE_ID);
         assertEq(token.balanceOf(alice), 1000);
         assertEq(token.balanceOf(bob), 0);
+    }
+
+    /// The proposal names the investor id; both wallets must carry it.
+    function test_recover_is_bound_to_the_proposed_investor_id() public {
+        address spare = makeAddr("spare-wallet-of-a");
+        _register(spare, ALICE_ID, CA);
+        vm.prank(alice);
+        token.transfer(bob, 400);
+        vm.startPrank(address(council));
+        vm.expectRevert(abi.encodeWithSelector(PoolToken.NotSameInvestor.selector, bob, spare));
+        token.recoverWallet(bob, spare, ALICE_ID);
+        vm.expectRevert(abi.encodeWithSelector(PoolToken.NotSameInvestor.selector, alice, spare));
+        token.recoverWallet(alice, spare, BOB_ID);
+        vm.expectRevert(abi.encodeWithSelector(PoolToken.NotSameInvestor.selector, alice, spare));
+        token.recoverWallet(alice, spare, bytes32(0));
+        vm.stopPrank();
+        assertEq(token.balanceOf(alice), 600);
+        assertEq(token.balanceOf(bob), 400);
+        assertEq(token.balanceOf(spare), 0);
+    }
+
+    /// A forced move spends the unfrozen part first and releases only the frozen part it
+    /// moves, even when more is frozen than held.
+    function test_forced_releases_only_the_frozen_part_it_moves() public {
+        vm.prank(agent);
+        token.setFrozenTokens(alice, 1500);
+        vm.prank(address(council));
+        token.forcedTransfer(alice, bob, 400);
+        assertEq(token.getFrozenTokens(alice), 1100);
+        vm.prank(agent);
+        token.setFrozenTokens(bob, 100);
+        uint256 carolBefore = token.balanceOf(carol);
+        vm.prank(address(council));
+        token.forcedTransfer(bob, carol, 350);
+        assertEq(token.getFrozenTokens(bob), 50);
+        assertEq(token.balanceOf(carol), carolBefore + 350);
+    }
+
+    function test_recover_leaves_the_frozen_excess_on_the_lost_wallet() public {
+        address replacement = makeAddr("replacement");
+        _register(replacement, ALICE_ID, CA);
+        vm.prank(agent);
+        token.setFrozenTokens(alice, 1500);
+        vm.prank(address(council));
+        token.recoverWallet(alice, replacement, ALICE_ID);
+        assertEq(token.getFrozenTokens(alice), 500);
+        assertEq(token.getFrozenTokens(replacement), 1000);
+        assertEq(token.balanceOf(replacement), 1000);
+    }
+
+    function test_frozen_changes_record_who_acted() public {
+        vm.expectEmit(address(token));
+        emit IERC7943Fungible.Frozen(alice, 500);
+        vm.expectEmit(address(token));
+        emit PoolToken.FrozenTokensChanged(alice, 500, agent);
+        vm.prank(agent);
+        token.setFrozenTokens(alice, 500);
+        vm.expectEmit(address(token));
+        emit IERC7943Fungible.Frozen(alice, 100);
+        vm.expectEmit(address(token));
+        emit PoolToken.FrozenTokensChanged(alice, 100, address(council));
+        vm.prank(address(council));
+        token.forcedTransfer(alice, bob, 900);
+        assertEq(token.getFrozenTokens(alice), 100);
+    }
+
+    function test_dust_cannot_take_a_holder_slot() public {
+        uint256 holders = token.holderCount();
+        vm.startPrank(address(council));
+        compliance.setMinHolding(100);
+        compliance.setMaxHolders(holders + 1);
+        vm.stopPrank();
+        vm.expectRevert(_refused(alice, bob, 1, Refusal.ReceiverBelowMinimumHolding));
+        vm.prank(alice);
+        token.transfer(bob, 1);
+        assertEq(token.holderCount(), holders);
+        assertEq(token.balanceOf(bob), 0);
+        vm.prank(alice);
+        token.transfer(bob, 100);
+        assertEq(token.holderCount(), holders + 1);
     }
 
     function test_recover_refuses_an_empty_wallet_and_the_same_wallet() public {
@@ -491,9 +571,9 @@ contract EligibilityTest is Fixture {
         _register(replacement, BOB_ID, US);
         vm.startPrank(address(council));
         vm.expectRevert(abi.encodeWithSelector(PoolToken.NothingToRecover.selector, bob));
-        token.recoverWallet(bob, replacement);
+        token.recoverWallet(bob, replacement, BOB_ID);
         vm.expectRevert(PoolToken.SameWallet.selector);
-        token.recoverWallet(alice, alice);
+        token.recoverWallet(alice, alice, ALICE_ID);
         vm.stopPrank();
     }
 
@@ -535,6 +615,7 @@ contract EligibilityTest is Fixture {
         assertTrue(token.canReceive(bob));
         assertFalse(token.canReceive(outsider));
         assertTrue(token.canTransfer(alice, bob, 1000));
+        // More than the balance exceeds the unfrozen amount, so false (docs/DECISIONS.md D-005).
         assertFalse(token.canTransfer(alice, bob, 1001));
         assertFalse(token.canTransfer(alice, outsider, 1));
         vm.prank(agent);
@@ -552,15 +633,9 @@ contract EligibilityTest is Fixture {
         deployer.token(19, address(council), compliance);
         address[] memory members = new address[](2);
         (members[0], members[1]) = (m1, m2);
-        address other = address(new Council_(members));
+        address other = address(deployer.council(members, 2, 1 days));
         vm.expectRevert(PoolToken.RegistryMismatch.selector);
         deployer.token(6, other, compliance);
         assertEq(token.decimals(), 6);
     }
-}
-
-import {Council} from "../src/Council.sol";
-
-contract Council_ is Council {
-    constructor(address[] memory members) Council(members, 2, 1 days) {}
 }
