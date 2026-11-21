@@ -35,7 +35,8 @@ the gate CI runs.
 
 - `crates/rwacredit-{http,db,accounts,server}` — the template's crates, renamed
 - `deploy/`, `scripts/`, `docs/`, `perf/` — host layer, drills, operator docs, evidence kit
-- `contracts/` — the Foundry project for the on-chain pieces (empty until M1)
+- `contracts/` — the Foundry project: registry, compliance, token and council (M1;
+  docs/ACCESS_CONTROL.md)
 - `web/` — empty until the design-system decision
 
 Licence: MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`).

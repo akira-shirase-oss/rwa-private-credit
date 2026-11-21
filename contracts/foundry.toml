@@ -1,8 +1,38 @@
+# Contracts: mock assets on a local chain only (docs/END_GOAL.md). Profiles:
+#   default  unit, fuzz (10,000 runs each) and the eligibility invariant campaign
+#   prove    the guard mutation proofs (scripts/prove-guards.sh): fewer runs, same tests
 [profile.default]
+src = "src"
+test = "test"
+libs = ["lib"]
 solc = "0.8.30"
+evm_version = "prague"
 optimizer = true
 optimizer_runs = 200
+remappings = [
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+  "forge-std/=lib/forge-std/src/",
+]
 
-[fuzz]
-# The end goal requires at least 10,000 runs per invariant.
+[profile.default.fuzz]
+# The end goal requires at least 10,000 runs per fuzz property.
 runs = 10000
+seed = "0x52574131"
+
+[profile.default.invariant]
+# 10,000 runs x depth 32 = 320,000 handler calls, every call a path a token can move by
+# or a change to someone's eligibility.
+runs = 10000
+depth = 32
+fail_on_revert = false
+
+[profile.prove.fuzz]
+runs = 256
+
+[profile.prove.invariant]
+runs = 64
+depth = 32
+fail_on_revert = false
+
+[fmt]
+line_length = 120

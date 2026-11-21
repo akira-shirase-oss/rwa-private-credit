@@ -26,3 +26,51 @@ Rust backend on Axum, SQLx and tokio (the template's stack); SvelteKit + TypeScr
 (strict) for the web UI once the maintainer chooses this product's design system — no
 `web/` product code before that. Solidity + Foundry only for on-chain code, in
 `contracts/`. Everything else follows `docs/END_GOAL.md`.
+
+## D-004 — M1 contracts: clean-room, council-governed, no upgrades
+
+The registry, compliance module and token are written clean-room from the ERC-3643
+pattern and the ERC-7943 text (docs/KNOWLEDGE.md: the reference implementation's licence
+is not compatible), on OpenZeppelin Contracts v5.7.0 (`ERC20`, `IERC165`, MIT) and
+forge-std v1.17.0, both git submodules pinned by commit; Foundry v1.10.0 is installed by
+`scripts/install-foundry.sh`, checked against its SHA-256. Every privileged action that
+can move a holder's tokens or loosen a rule goes through `Council`, an M-of-N (M >= 2)
+multisig with a delay of at least a day, written here rather than depending on an
+external multisig so the whole process is tested in this repository. Protective actions
+(freeze, pause) take one agent key and act at once; releasing them takes the council.
+There are no proxies: an upgrade is a new deployment. The written model is
+docs/ACCESS_CONTROL.md. The `credit` integer mirror is M3's (END_GOAL invariant 3): M1
+has no arithmetic beyond balance and holder counts, so no mirror is built here.
+
+
+## D-005 — M1 review: how the council stops a call, and `canTransfer` past the balance
+
+The council being immutable, its stop is in M1: `revokeApproval` before a call queues and
+`cancel` before it executes, one member for a call to another contract (stopping is
+protective, like a pause) and `N - M + 1` for a call to the council itself, so a member
+cannot veto its own removal. Governed contracts accept only this repository's `Council`
+runtime code, by hash, not what an address reports. The minimum holding is required to be
+non-zero rather than counting holders by investor id, which would need the registry in
+the balance hook's count and is left for M2 if subscriptions need it (docs/ROADMAP.md).
+
+ERC-7943 says `canTransfer` MUST NOT return false on a balance check and MUST check the
+amount against the unfrozen amount. An amount above the balance is always above the
+unfrozen amount, so the second rule decides: `canTransfer` returns false and
+`transferRefusal` names `InsufficientBalance`. This is the recorded reading of the two
+rules, not a deviation from the interface (id `0x3edbb4c4`).
+
+
+## D-006 — M1 re-check: one wallet per investor id, a whole-token floor, M < N
+
+A registrar registers one wallet per investor id; a further wallet of the same investor
+takes the council's `setInvestorId` (after the delay), and the registry counts wallets
+per id (`walletCount`). The holder cap still counts wallets (D-005), but a registrar can
+no longer make one investor several holders. The minimum holding is at least one whole
+token (`10 ** decimals`, decimals at most 18, matched by the token), so filling `F` free
+holder slots costs at least `F x minHolding`; its value in money is the pool's economics,
+set by the council. The threshold is strictly below the member count (so at least three
+members) and the council cannot be its own member: at M == N one member cancels every
+change of the council. A member cancelling revocations is removed first, so containing a
+compromised agent or registrar can take two delays. The council's runtime code hash
+(metadata included) is pinned by a test; a council and the contracts governed by it are
+deployed from the same commit and settings (docs/ACCESS_CONTROL.md).
